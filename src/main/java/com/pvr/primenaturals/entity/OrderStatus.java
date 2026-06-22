@@ -1,0 +1,5 @@
+package com.pvr.primenaturals.entity;
+
+public enum OrderStatus {
+    PENDING, PLACED, PACKED, SHIPPED, OUT_FOR_DELIVERY, DELIVERED, CANCELLED
+}
