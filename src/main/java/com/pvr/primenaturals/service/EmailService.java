@@ -23,11 +23,15 @@ public class EmailService {
     @org.springframework.beans.factory.annotation.Value("${spring.mail.username}")
     private String mailFrom;
 
+    @org.springframework.beans.factory.annotation.Value("${app.frontend.url:http://localhost:5173}")
+    private String frontendUrl;
+
     public void sendOrderConfirmation(OrderDTO order, String recipientEmail) {
         try {
             Context context = new Context();
             context.setVariable("order", order);
             context.setVariable("userName", order.getUserName());
+            context.setVariable("frontendUrl", frontendUrl);
             
             String process = templateEngine.process("email/order-confirmation", context);
             
