@@ -5,6 +5,8 @@ import com.pvr.primenaturals.entity.ProductSubCategory;
 import com.pvr.primenaturals.entity.ProductType;
 import com.pvr.primenaturals.exception.ResourceNotFoundException;
 import com.pvr.primenaturals.repository.*;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -80,6 +82,7 @@ public class ProductService {
         productSubCategoryRepository.deleteById(id);
     }
 
+    @Cacheable(value = "products", key = "'active'")
     public List<Product> getAllActiveProducts() {
         return productRepository.findByActiveTrue();
     }
@@ -88,11 +91,13 @@ public class ProductService {
         return productRepository.findAll();
     }
 
+    @Cacheable(value = "products", key = "#id")
     public Product getProductById(Long id) {
         return productRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Product not found with id " + id));
     }
 
+    @Cacheable(value = "products", key = "#name + '_' + #typeName + '_' + #activeOnly")
     public List<Product> searchProducts(String name, String typeName, boolean activeOnly) {
         if (typeName != null && !typeName.trim().isEmpty() && !typeName.equalsIgnoreCase("All")) {
             return activeOnly ? productRepository.findByActiveTrueAndNameContainingIgnoreCaseAndSubCategoryProductTypeName(name, typeName)
@@ -102,17 +107,20 @@ public class ProductService {
                           : productRepository.findByNameContainingIgnoreCase(name);
     }
 
+    @Cacheable(value = "products", key = "#name + '_' + #activeOnly")
     public List<Product> getProductsByTypeName(String name, boolean activeOnly) {
         return activeOnly ? productRepository.findByActiveTrueAndSubCategoryProductTypeName(name)
                           : productRepository.findBySubCategoryProductTypeName(name);
     }
 
+    @CacheEvict(value = "products", allEntries = true)
     public Product addProduct(Product product) {
         Product p = productRepository.save(product);
         broadcastProductSync();
         return p;
     }
 
+    @CacheEvict(value = "products", allEntries = true)
     public Product updateProduct(Long id, Product newProductData) {
         Product existingProduct = getProductById(id);
         existingProduct.setName(newProductData.getName());
@@ -131,6 +139,7 @@ public class ProductService {
         return p;
     }
 
+    @CacheEvict(value = "products", allEntries = true, beforeInvocation = true)
     @Transactional
     public void deleteProduct(Long id) {
         Product product = getProductById(id);
@@ -152,6 +161,7 @@ public class ProductService {
         broadcastProductSync();
     }
 
+    @CacheEvict(value = "products", allEntries = true, beforeInvocation = true)
     @Transactional
     public void restoreProduct(Long id) {
         Product product = getProductById(id);

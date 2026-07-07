@@ -20,14 +20,25 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.Arrays;
+import org.springframework.http.HttpMethod;
+import jakarta.annotation.PostConstruct;
 
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
 public class WebSecurityConfig {
 
-    @Value("${app.cors.allowed-origins:http://localhost:5173}")
+    private static final String DEFAULT_ALLOWED_ORIGINS = "https://pvr-prime-naturals-fe.vercel.app";
+
+    @Value("${app.cors.allowed-origins:}")
     private String allowedOrigins;
+
+    @PostConstruct
+    private void initAllowedOrigins() {
+        if (allowedOrigins == null || allowedOrigins.isBlank()) {
+            allowedOrigins = DEFAULT_ALLOWED_ORIGINS;
+        }
+    }
 
     @Autowired
     UserDetailsServiceImpl userDetailsService;
@@ -60,6 +71,8 @@ public class WebSecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
+
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.csrf(csrf -> csrf.disable())
@@ -67,7 +80,8 @@ public class WebSecurityConfig {
                 .exceptionHandling(exception -> exception.authenticationEntryPoint(unauthorizedHandler))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth ->
-                        auth.requestMatchers("/api/auth/**").permitAll()
+                        auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                                .requestMatchers("/api/auth/**").permitAll()
                                 .requestMatchers("/api/products/**").permitAll()
                                 .requestMatchers("/api/categories/**").permitAll()
                                 .requestMatchers("/api/reviews/**").permitAll()
@@ -82,7 +96,6 @@ public class WebSecurityConfig {
         http.authenticationProvider(authenticationProvider());
 
         http.addFilterBefore(authenticationJwtTokenFilter(), UsernamePasswordAuthenticationFilter.class);
-
         return http.build();
     }
 

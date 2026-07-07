@@ -52,6 +52,11 @@ public class Product {
     @UpdateTimestamp
     private LocalDateTime updatedAt;
 
+    @Column(unique = true)
+    private String sku;
+
+    private String barcode;
+
     @Column(nullable = false)
     private boolean active = true;
 }

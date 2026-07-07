@@ -6,29 +6,20 @@ import com.pvr.primenaturals.dto.response.JwtResponse;
 import com.pvr.primenaturals.dto.response.MessageResponse;
 import com.pvr.primenaturals.dto.request.ForgotPasswordRequest;
 import com.pvr.primenaturals.dto.request.ResetPasswordRequest;
-import com.pvr.primenaturals.entity.Role;
-import com.pvr.primenaturals.entity.User;
-import com.pvr.primenaturals.repository.UserRepository;
+import com.pvr.primenaturals.dto.response.RefreshTokenResponse;
+import com.pvr.primenaturals.entity.RefreshToken;
 import com.pvr.primenaturals.security.JwtUtils;
-import com.pvr.primenaturals.security.UserDetailsImpl;
+import com.pvr.primenaturals.service.AuthService;
+import com.pvr.primenaturals.service.RefreshTokenService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
-import com.pvr.primenaturals.service.EmailService;
 
 @CrossOrigin(origins = "*", maxAge = 3600)
 @RestController
@@ -36,132 +27,110 @@ import com.pvr.primenaturals.service.EmailService;
 public class AuthController {
 
     private static final Logger log = Logger.getLogger(AuthController.class.getName());
-    @Autowired
-    AuthenticationManager authenticationManager;
 
     @Autowired
-    UserRepository userRepository;
+    private AuthService authService;
 
     @Autowired
-    PasswordEncoder encoder;
+    private JwtUtils jwtUtils;
 
     @Autowired
-    JwtUtils jwtUtils;
-
-    @Autowired
-    EmailService emailService;
+    private RefreshTokenService refreshTokenService;
 
     @PostMapping("/login")
     public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
+        JwtResponse jwtResponse = authService.authenticateUser(loginRequest);
 
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(loginRequest.getEmail(), loginRequest.getPassword()));
+        // Create refresh token in DB
+        RefreshToken refreshToken = refreshTokenService.createRefreshToken(jwtResponse.getId());
 
-        SecurityContextHolder.getContext().setAuthentication(authentication);
-        String jwt = jwtUtils.generateJwtToken(authentication);
+        // Generate HttpOnly cookies
+        ResponseCookie jwtCookie = jwtUtils.generateJwtCookieFromUsername(jwtResponse.getEmail());
+        ResponseCookie jwtRefreshCookie = jwtUtils.generateRefreshJwtCookie(refreshToken.getToken());
 
-        UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
-        List<String> roles = userDetails.getAuthorities().stream()
-                .map(item -> item.getAuthority())
-                .collect(Collectors.toList());
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, jwtCookie.toString())
+                .header(HttpHeaders.SET_COOKIE, jwtRefreshCookie.toString())
+                .body(jwtResponse);
+    }
 
-        return ResponseEntity.ok(new JwtResponse(jwt,
-                userDetails.getId(),
-                userDetails.getUsername(),
-                userDetails.getName(),
-                roles));
+    @PostMapping("/refreshtoken")
+    public ResponseEntity<?> refreshtoken(HttpServletRequest request) {
+        String refreshToken = jwtUtils.getJwtRefreshFromCookies(request);
+
+        if (refreshToken != null && !refreshToken.isEmpty()) {
+            try {
+                RefreshTokenResponse response = authService.rotateTokens(refreshToken);
+
+                RefreshToken dbToken = refreshTokenService.findByToken(response.getRefreshToken())
+                        .orElseThrow(() -> new IllegalArgumentException("Rotated token not found in database!"));
+
+                ResponseCookie newJwtCookie = jwtUtils.generateJwtCookieFromUsername(dbToken.getUser().getEmail());
+                ResponseCookie newJwtRefreshCookie = jwtUtils.generateRefreshJwtCookie(response.getRefreshToken());
+
+                return ResponseEntity.ok()
+                        .header(HttpHeaders.SET_COOKIE, newJwtCookie.toString())
+                        .header(HttpHeaders.SET_COOKIE, newJwtRefreshCookie.toString())
+                        .body(new MessageResponse("Token refreshed successfully!"));
+            } catch (Exception e) {
+                return ResponseEntity.badRequest().body(new MessageResponse(e.getMessage()));
+            }
+        }
+
+        return ResponseEntity.badRequest().body(new MessageResponse("Refresh Token Cookie is empty!"));
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<?> logoutUser(HttpServletRequest request) {
+        String refreshToken = jwtUtils.getJwtRefreshFromCookies(request);
+        if (refreshToken != null && !refreshToken.isEmpty()) {
+            try {
+                RefreshToken token = refreshTokenService.findByToken(refreshToken).orElse(null);
+                if (token != null) {
+                    refreshTokenService.deleteByUserId(token.getUser().getId());
+                }
+            } catch (Exception e) {
+                log.warning("Failed to delete refresh token on logout: " + e.getMessage());
+            }
+        }
+
+        ResponseCookie jwtCookie = jwtUtils.getCleanJwtCookie();
+        ResponseCookie jwtRefreshCookie = jwtUtils.getCleanRefreshJwtCookie();
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, jwtCookie.toString())
+                .header(HttpHeaders.SET_COOKIE, jwtRefreshCookie.toString())
+                .body(new MessageResponse("Logged out successfully!"));
     }
 
     @PostMapping("/register")
     public ResponseEntity<?> registerUser(@Valid @RequestBody SignupRequest signUpRequest) {
-        if (userRepository.existsByEmail(signUpRequest.getEmail())) {
-            return ResponseEntity
-                    .badRequest()
-                    .body(new MessageResponse("Error: Email is already in use!"));
+        try {
+            authService.registerUser(signUpRequest);
+            return ResponseEntity.ok(new MessageResponse("User registered successfully!"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(new MessageResponse(e.getMessage()));
         }
-
-        // Create new user's account
-        User user = new User();
-        user.setName(signUpRequest.getName());
-        user.setEmail(signUpRequest.getEmail());
-        user.setPassword(encoder.encode(signUpRequest.getPassword()));
-        
-        // Auto assign USER role for self-registration
-        user.setRole(Role.USER);
-
-        // If email is admin, make them ADMIN (for testing ease)
-        if(signUpRequest.getEmail().contains("admin")) {
-            user.setRole(Role.ADMIN);
-        }
-
-        userRepository.save(user);
-
-        return ResponseEntity.ok(new MessageResponse("User registered successfully!"));
     }
 
-    @Transactional
     @PostMapping("/forgot-password")
     public ResponseEntity<?> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
         try {
-            String trimmedEmail = request.getEmail().trim().toLowerCase();
-            log.info("[AUTH] Password reset requested for: " + trimmedEmail);
-
-            User user = userRepository.findByEmail(trimmedEmail).orElse(null);
-            
-            if (user == null) {
-                log.info("[AUTH] No account found for: " + trimmedEmail + " - returning generic response.");
-                return ResponseEntity.ok(new MessageResponse("If your email is in our system, you will receive a reset link shortly."));
-            }
-
-            String token = UUID.randomUUID().toString();
-            user.setResetToken(token);
-            user.setResetTokenExpiry(LocalDateTime.now().plusHours(1));
-            // saveAndFlush() forces an immediate DB commit before the email is sent
-            // This prevents a race condition where the user clicks the link before the token is persisted
-            userRepository.saveAndFlush(user);
-            log.info("[AUTH] Reset token persisted to DB for: " + trimmedEmail);
-
-            String resetLink = "http://localhost:5173/reset-password?token=" + token;
-            emailService.sendPasswordResetEmail(trimmedEmail, resetLink);
-            log.info("[AUTH] Reset email dispatched to: " + trimmedEmail);
-
+            authService.processForgotPassword(request);
             return ResponseEntity.ok(new MessageResponse("Recovery link dispatched to your secure terminal."));
         } catch (Exception e) {
-            e.printStackTrace();
             return ResponseEntity.internalServerError().body(new MessageResponse("Error: " + e.getMessage()));
         }
     }
 
-    @Transactional
     @PostMapping("/reset-password")
     public ResponseEntity<?> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
         try {
-            String trimmedToken = request.getToken().trim();
-            log.info("[AUTH] Password reset attempt with token: " + trimmedToken);
-
-            Optional<User> userOptional = userRepository.findByResetToken(trimmedToken);
-            
-            if (userOptional.isEmpty()) {
-                log.warning("[AUTH] No user found for token: " + trimmedToken);
-                return ResponseEntity.badRequest().body(new MessageResponse("Security link is invalid or has already been used."));
-            }
-
-            User user = userOptional.get();
-
-            if (user.getResetTokenExpiry() == null || user.getResetTokenExpiry().isBefore(LocalDateTime.now())) {
-                log.warning("[AUTH] Token expired for user: " + user.getEmail());
-                return ResponseEntity.badRequest().body(new MessageResponse("Security link has expired. Please request a new one from the Forgot Password page."));
-            }
-
-            user.setPassword(encoder.encode(request.getNewPassword()));
-            user.setResetToken(null);
-            user.setResetTokenExpiry(null);
-            userRepository.saveAndFlush(user);
-            log.info("[AUTH] Password updated successfully for: " + user.getEmail());
-
+            authService.processResetPassword(request);
             return ResponseEntity.ok(new MessageResponse("Credentials updated. You may now re-authenticate."));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(new MessageResponse(e.getMessage()));
         } catch (Exception e) {
-            e.printStackTrace();
             return ResponseEntity.internalServerError().body(new MessageResponse("An internal anomaly occurred: " + e.getMessage()));
         }
     }

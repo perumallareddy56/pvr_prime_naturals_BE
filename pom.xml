@@ -14,7 +14,7 @@
 	<name>PVRPrimeNaturals</name>
 	<description>PVR Prime Naturals E-Commerce Application</description>
 	<properties>
-		<java.version>17</java.version>
+		<java.version>21</java.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -108,6 +108,20 @@
 			<artifactId>okhttp</artifactId>
 			<version>4.12.0</version>
 		</dependency>
+		<dependency>
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+			<version>2.5.0</version>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-redis</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.stripe</groupId>
+			<artifactId>stripe-java</artifactId>
+			<version>25.1.0</version>
+		</dependency>
 	</dependencies>
 
 	<build>
@@ -129,8 +143,8 @@
 			<artifactId>maven-compiler-plugin</artifactId>
 			<version>3.11.0</version>
 			<configuration>
-				<source>17</source>
-				<target>17</target>
+				<source>21</source>
+				<target>21</target>
 				<annotationProcessorPaths>
 					<path>
 						<groupId>org.projectlombok</groupId>
